@@ -1,67 +1,65 @@
 package main
 
 import (
-	"encoding/json"
-	"github.com/go-playground/validator/v10"
+	"awesomeProject4/api"
+	"context"
+	"flag"
+	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/go-playground/validator/v10"
 	"go.uber.org/zap"
 )
 
-type RouteRequest struct {
-	Route [][]string `json:"route" validate:"required,min=1,max=1,dive,required,min=2,max=2"`
-}
-
-func validateRouteRequest(req RouteRequest) error {
-	validate := validator.New()
-	if err := validate.Struct(req); err != nil {
-		return err
-	}
-	return nil
-}
-
 func main() {
+	var (
+		listen = flag.String("listen", ":8080", "Listen specified address.")
+	)
+	flag.Parse()
+	ctx, cancel := context.WithCancel(context.Background())
+
 	logger, _ := zap.NewProduction()
 	defer logger.Sync()
 
+	server := api.NewServer(logger)
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-
-	r.Post("/route", func(w http.ResponseWriter, r *http.Request) {
-		var req RouteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			logger.Error("Error decoding request", zap.Error(err))
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		if err := validateRouteRequest(req); err != nil {
-			logger.Error("Invalid request", zap.Error(err))
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		point := GetRouteStartAndEnd(req.Route)
-		if point.Source == "" || point.Destination == "" {
-			logger.Error("Invalid route")
-			http.Error(w, "Invalid route", http.StatusBadRequest)
-			return
-		}
-
-		resp := Point{Source: point.Source, Destination: point.Destination}
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			logger.Error("Error encoding response", zap.Error(err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		logger.Info("Request successful", zap.Any("request", req), zap.Any("response", resp))
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.Timeout(time.Duration(20) * time.Second))
+		api.HandlerFromMux(server, r)
+	})
+	r.Get("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
 
-	if err := http.ListenAndServe(":8080", r); err != nil {
-		logger.Error("Error starting server", zap.Error(err))
+	srv := &http.Server{
+		Handler: r,
+		Addr:    *listen,
 	}
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	// ES is a http.Handler, so you can pass it directly to your mux
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Error starting server", zap.Error(err))
+		}
+	}()
+	logger.Info(fmt.Sprintf("server started on port %v", *listen))
+
+	<-done
+	logger.Info("server terminating...")
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("server terminating failed", zap.Error(err))
+	}
+
+	// cleanup: closing db...etc
+	cancel()
+	logger.Info("exited")
 }

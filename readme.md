@@ -102,3 +102,5 @@ Assume that we have 10 destinations as well as the sources, then the successful 
 - Autoscaling group based on the cpu/memory utilization
 - Dockerize the app
 - Generate the api from a swagger file instead of keeping 2 different copies between the code and design.
+- Add auth, rate limiters
+- Add versioning
