@@ -6,7 +6,7 @@ import (
 )
 
 func TestGetRouteStartAndEnd(t *testing.T) {
-	route := [][]string{{"A", "B"}, {"B", "C"}, {"D", "E"}}
+	route := [][]string{{"A", "B"}, {"B", "C"}, {"C", "E"}}
 	expected := Point{Source: "A", Destination: "E"}
 	result := GetRouteStartAndEnd(route)
 	if !reflect.DeepEqual(result, expected) {
